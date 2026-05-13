@@ -1,15 +1,14 @@
-name: Core
-version: 0.0.1
-main: me.nv.Core
-authors: [Uknown]
-api-version: 1.21.5
+main: me.arrow.Core
+name: ArrowLoader
+version: 0.3.1
+load: POSTWORLD
+description: Loader for Arrow Anticheat (stel9178 on discord)
+author: Stel
+api-version: 1.13
+softdepend:
+  - PacketEvents
 commands:
-  message:
-    description: Send a private message to a player
-    aliases: msg
-  reply:
-    description: Reply to the last private message sent to you
-    aliases: r
-  gamemode:
-    description: Change gamemode (Admin Only)
-    aliases: gm
+  arrow:
+    description: The main anticheat command!
+  stuck:
+    description: Teleport to spawn (Test Server Mode Only)
