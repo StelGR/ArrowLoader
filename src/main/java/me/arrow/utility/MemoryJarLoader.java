@@ -4,15 +4,15 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
 
 public final class MemoryJarLoader extends ClassLoader implements AutoCloseable {
 
-    private final Map<String, byte[]> classes = new HashMap<>();
-    private final Map<String, byte[]> resources = new HashMap<>();
+    private final Map<String, byte[]> classes = new ConcurrentHashMap<>();
+    private final Map<String, byte[]> resources = new ConcurrentHashMap<>();
 
     public MemoryJarLoader(byte[] jarBytes, ClassLoader parent) throws IOException {
         super(parent);
@@ -55,6 +55,11 @@ public final class MemoryJarLoader extends ClassLoader implements AutoCloseable 
 
     @Override
     protected Class<?> findClass(String name) throws ClassNotFoundException {
+        Class<?> loaded = findLoadedClass(name);
+        if (loaded != null) {
+            return loaded;
+        }
+
         byte[] bytes = classes.remove(name);
 
         if (bytes == null) {

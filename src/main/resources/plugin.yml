@@ -8,7 +8,16 @@ api-version: 1.13
 softdepend:
   - PacketEvents
 commands:
+  arrowloader:
+    description: ArrowLoader management commands.
+    aliases: [al]
+    permission: arrowloader.admin
   arrow:
     description: The main anticheat command!
   stuck:
     description: Teleport to spawn (Test Server Mode Only)
+
+permissions:
+  arrowloader.admin:
+    description: Allows use of ArrowLoader commands and receives update notifications.
+    default: op
