@@ -5,6 +5,7 @@ load: POSTWORLD
 description: Loader for Arrow Anticheat (stel9178 on discord)
 author: Stel
 api-version: 1.13
+folia-supported: true
 softdepend:
   - PacketEvents
 commands:
