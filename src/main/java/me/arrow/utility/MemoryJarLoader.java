@@ -6,18 +6,22 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
 
 public final class MemoryJarLoader extends ClassLoader implements AutoCloseable {
 
-    private final Map<String, byte[]> classes = new HashMap<>();
-    private final Map<String, byte[]> resources = new HashMap<>();
+    private final Map<String, byte[]> classes = new ConcurrentHashMap<>();
+    private final Map<String, byte[]> resources = new ConcurrentHashMap<>();
+    private final Map<String, Class<?>> loadedClasses = new ConcurrentHashMap<>();
 
     public MemoryJarLoader(byte[] jarBytes, ClassLoader parent) throws IOException {
         super(parent);
         loadJarBytes(jarBytes);
     }
+
+
 
     private void loadJarBytes(byte[] jarBytes) throws IOException {
         if (jarBytes == null || jarBytes.length == 0) {
@@ -55,13 +59,21 @@ public final class MemoryJarLoader extends ClassLoader implements AutoCloseable 
 
     @Override
     protected Class<?> findClass(String name) throws ClassNotFoundException {
-        byte[] bytes = classes.remove(name);
+        Class<?> clazz = loadedClasses.get(name);
 
-        if (bytes == null) {
+        if (clazz != null)
+            return clazz;
+
+        byte[] bytes = classes.get(name);
+
+        if (bytes == null)
             throw new ClassNotFoundException(name);
-        }
 
-        return defineClass(name, bytes, 0, bytes.length);
+
+        clazz = defineClass(name, bytes, 0, bytes.length);
+        loadedClasses.put(name, clazz);
+
+        return clazz;
     }
 
     @Override
