@@ -1,6 +1,6 @@
 main: me.arrow.Core
 name: ArrowLoader
-version: 0.3.2
+version: 0.4.0
 load: POSTWORLD
 description: Loader for Arrow Anticheat (stel9178 on discord)
 author: Stel
@@ -11,5 +11,10 @@ softdepend:
 commands:
   arrow:
     description: The main anticheat command!
-  stuck:
-    description: Teleport to spawn (Test Server Mode Only)
+  updatearrow:
+    description: Reload the Arrow anticheat core without server restart
+    permission: arrow.admin
+permissions:
+  arrow.admin:
+    description: Allows reloading the Arrow core
+    default: op

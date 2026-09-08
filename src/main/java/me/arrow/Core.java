@@ -5,6 +5,10 @@ import lombok.Setter;
 import me.arrow.utility.MemoryJarLoader;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
+import org.bukkit.ChatColor;
+import java.util.Objects;
+import me.arrow.command.UpdateCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.BufferedReader;
@@ -23,6 +27,8 @@ import java.util.Locale;
 
 public class Core extends JavaPlugin {
 
+    public static Core instance;
+
     private static final String PASTEBIN_RAW_URL = "https://pastebin.com/raw/EVQABwGt";
 
     /*
@@ -38,49 +44,32 @@ public class Core extends JavaPlugin {
 
     @Getter
     @Setter
-    private static Core plugin;
-
-    @Getter
-    @Setter
     private Object arrowInstance;
 
     @Getter
     @Setter
     private Class<?> arrowClass;
 
+    /**
+     * Returns the Arrow core class, loading it if necessary.
+     */
+    public Class<?> getOrLoadArrowClass() {
+        if (arrowClass != null) return arrowClass;
+        // Load core without a command sender (silent)
+        loadCore(null, false);
+        return arrowClass;
+    }
+
     private MemoryJarLoader memoryJarLoader;
     private Metrics metrics;
 
     @Override
     public void onEnable() {
-        long startTime = System.currentTimeMillis();
-        Core.setPlugin(this);
-
-        try {
-            startMetrics();
-
-            String coreDownloadUrl = fetchDownloadUrl(PASTEBIN_RAW_URL);
-            byte[] jarBytes = downloadJar(coreDownloadUrl);
-
-            memoryJarLoader = new MemoryJarLoader(jarBytes, getClassLoader());
-
-            File arrowFolder = getDataFolder();
-            if (!arrowFolder.exists() && !arrowFolder.mkdirs()) {
-                throw new IOException("Failed to create plugin data folder.");
-            }
-
-            arrowClass = memoryJarLoader.loadClass("me.arrow.Arrow");
-            arrowInstance = constructArrow(arrowClass, arrowFolder);
-
-            invokeArrowEnable(arrowClass, arrowInstance);
-
-            long endTime = System.currentTimeMillis();
-            getLogger().info("Arrow Anticheat loaded successfully in " + (endTime - startTime) + "ms.");
-        } catch (Throwable throwable) {
-            Throwable root = unwrap(throwable);
-            getLogger().severe("Failed to initialize ArrowLoader: " + root.getClass().getSimpleName() + ": " + root.getMessage());
-            getServer().getPluginManager().disablePlugin(this);
-        }
+        instance = this;
+        // Load core without a command sender (no chat feedback)
+        // Delay loading core until after server startup to avoid "Server is still loading" issues
+        Bukkit.getScheduler().runTaskLater(instance, () -> loadCore(null, false), 5L);
+        Objects.requireNonNull(getCommand("updatearrow")).setExecutor(new UpdateCommand(instance));
     }
 
     @Override
@@ -92,8 +81,8 @@ public class Core extends JavaPlugin {
         closeMemoryLoader();
 
         arrowInstance = null;
-        arrowClass = null;
-        Core.setPlugin(null);
+        // arrowClass is retained for reload flag handling
+        instance = null;
 
         long endTime = System.currentTimeMillis();
         getLogger().info("ArrowLoader shutdown in " + (endTime - startTime) + "ms.");
@@ -106,7 +95,7 @@ public class Core extends JavaPlugin {
         }
 
         try {
-            metrics = new Metrics(this, BSTATS_PLUGIN_ID);
+            metrics = new Metrics(instance, BSTATS_PLUGIN_ID);
             getLogger().info("bStats metrics enabled.");
         } catch (Throwable throwable) {
             getLogger().warning("Failed to start bStats metrics: " + throwable.getClass().getSimpleName() + ": " + throwable.getMessage());
@@ -131,14 +120,14 @@ public class Core extends JavaPlugin {
         try {
             Constructor<?> constructor = clazz.getConstructor(JavaPlugin.class, File.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(this, folder);
+            return constructor.newInstance(instance, folder);
         } catch (NoSuchMethodException ignored) {
         }
 
         try {
             Constructor<?> constructor = clazz.getConstructor(JavaPlugin.class, File.class, int.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(this, folder, 0);
+            return constructor.newInstance(instance, folder, 0);
         } catch (NoSuchMethodException ignored) {
         }
 
@@ -336,5 +325,113 @@ public class Core extends JavaPlugin {
 
     public String getServerImplementationName() {
         return isFolia() ? "Folia" : Bukkit.getName();
+    }
+
+    public void loadCore(CommandSender sender, boolean reloading) {
+        if (sender != null) {
+            sender.sendMessage(ChatColor.YELLOW + "Downloading Arrow core...");
+        } else {
+            getLogger().info("Downloading Arrow core...");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            startMetrics();
+            String url = fetchDownloadUrl(PASTEBIN_RAW_URL);
+            if (sender != null) {
+                sender.sendMessage(ChatColor.YELLOW + "Download URL retrieved.");
+            }
+            byte[] jarBytes = downloadJar(url);
+            if (sender != null) {
+                sender.sendMessage(ChatColor.YELLOW + "Download complete. Loading core...");
+            }
+            memoryJarLoader = new MemoryJarLoader(jarBytes, this.getClass().getClassLoader());
+            Class<?> clazz = memoryJarLoader.loadClass("me.arrow.Arrow");
+            arrowClass = clazz;
+            arrowInstance = constructArrow(clazz, getDataFolder());
+            if (sender != null) {
+                sender.sendMessage(ChatColor.YELLOW + "Invoking Arrow onEnable...");
+            }
+
+            if (reloading) {
+                try {
+                    Class<?> arrowCls = getOrLoadArrowClass();
+                    java.lang.reflect.Method set = arrowCls.getMethod("setReloadingTrue");
+                    set.invoke(null);
+                    getLogger().info("[ReloadFlag] Arrow.reloading set to true");
+                } catch (Exception e) {
+                    getLogger().severe("Failed to set reloading flag via reflection: " + e);
+                }
+            }
+
+            invokeArrowEnable(clazz, arrowInstance);
+
+            if (reloading) {
+                // Reset the reload flag after core has loaded (120 ticks delay)
+                Bukkit.getScheduler().runTaskLater(instance, () -> {
+                    try {
+                        Class<?> arrowCls = getOrLoadArrowClass();
+                        java.lang.reflect.Method reset = arrowCls.getDeclaredMethod("resetReloading");
+                        reset.setAccessible(true);
+                        reset.invoke(null);
+                        getLogger().info("[ReloadFlag] Arrow.reloading set to false");
+                    } catch (Exception e) {
+                        getLogger().severe("Failed to reset reloading flag via reflection: " + e);
+                    }
+                }, 120L);
+            }
+
+            long end = System.currentTimeMillis();
+            if (sender != null) {
+                sender.sendMessage(ChatColor.GREEN + "Arrow core loaded successfully in " + (end - start) + "ms.");
+            } else {
+                getLogger().info("Arrow core loaded successfully in " + (end - start) + "ms.");
+            }
+        } catch (Exception e) {
+            getLogger().severe("Failed to load Arrow core: " + e.getMessage());
+            if (sender != null) {
+                sender.sendMessage(ChatColor.RED + "Failed to load Arrow core: " + e.getMessage());
+            }
+        }
+    }
+
+    public void unloadCore(CommandSender sender) {
+        if (sender != null) {
+            sender.sendMessage(ChatColor.YELLOW + "Shutting down Arrow core...");
+        } else {
+            getLogger().info("Shutting down Arrow core...");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            shutdownMetrics();
+            shutdownArrow();
+            closeMemoryLoader();
+            arrowInstance = null;
+            arrowClass = null;
+            memoryJarLoader = null;
+            long end = System.currentTimeMillis();
+            if (sender != null) {
+                sender.sendMessage(ChatColor.GREEN + "Arrow core shutdown complete in " + (end - start) + "ms.");
+            } else {
+                getLogger().info("Arrow core shutdown complete in " + (end - start) + "ms.");
+            }
+        } catch (Exception e) {
+            getLogger().severe("Error during Arrow core shutdown: " + e.getMessage());
+            if (sender != null) {
+                sender.sendMessage(ChatColor.RED + "Error during Arrow core shutdown: " + e.getMessage());
+            }
+        }
+    }
+
+    public void reloadCore(CommandSender sender) {
+        if (sender != null) {
+            sender.sendMessage(ChatColor.YELLOW + "Reloading Arrow core...");
+        }
+        unloadCore(sender);
+        loadCore(sender, true);
+        if (sender != null) {
+            sender.sendMessage(ChatColor.GREEN + "Arrow core reload complete.");
+        }
+
+
     }
 }

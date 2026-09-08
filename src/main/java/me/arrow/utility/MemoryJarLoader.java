@@ -21,8 +21,7 @@ public final class MemoryJarLoader extends ClassLoader implements AutoCloseable 
         loadJarBytes(jarBytes);
     }
 
-
-
+    
     private void loadJarBytes(byte[] jarBytes) throws IOException {
         if (jarBytes == null || jarBytes.length == 0) {
             throw new IOException("JAR bytes are empty.");
