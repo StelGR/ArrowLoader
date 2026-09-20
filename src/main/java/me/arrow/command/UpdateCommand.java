@@ -25,7 +25,6 @@ public class UpdateCommand implements CommandExecutor {
 
         sender.sendMessage(ChatColor.YELLOW + "Starting Arrow core reload…");
         loader.reloadCore(sender);
-        sender.sendMessage(ChatColor.GREEN + "Arrow core reload complete.");
 
         return true;
     }

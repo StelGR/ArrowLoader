@@ -20,9 +20,13 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 
 public class Core extends JavaPlugin {
@@ -30,6 +34,12 @@ public class Core extends JavaPlugin {
     public static Core instance;
 
     private static final String PASTEBIN_RAW_URL = "https://pastebin.com/raw/EVQABwGt";
+    private static final String GIST_RAW_URL = "https://gist.githubusercontent.com/StelGR/49765843ecc471e338bd35b2648e544f/raw/gistfile1.txt";
+
+    private static final List<String> DOWNLOAD_URL_SOURCES = Arrays.asList(
+        PASTEBIN_RAW_URL,
+        GIST_RAW_URL
+    );
 
     /*
      * Replace 0 with your bStats plugin/service id after registering ArrowLoader on bStats.
@@ -196,13 +206,87 @@ public class Core extends JavaPlugin {
         }
     }
 
-    private String fetchDownloadUrl(String pastebinRawUrl) throws IOException {
-        URL pastebinUrl = validateHttpUrl(pastebinRawUrl, "Pastebin URL");
-        URLConnection connection = pastebinUrl.openConnection();
+    private byte[] downloadCoreJar(CommandSender sender) throws IOException {
+        List<String> errors = new ArrayList<>();
+
+        for (int i = 0; i < DOWNLOAD_URL_SOURCES.size(); i++) {
+            String sourceUrl = DOWNLOAD_URL_SOURCES.get(i);
+            String sourceLabel = (i == 0) ? "primary source" : "backup source #" + i;
+
+            try {
+                String downloadUrl = fetchDownloadUrlFromSource(sourceUrl);
+                if (sender != null) {
+                    sender.sendMessage(ChatColor.YELLOW + "Download URL retrieved from " + sourceLabel + ". Downloading core...");
+                } else {
+                    getLogger().info("Download URL retrieved from " + sourceLabel + ". Downloading core...");
+                }
+
+                byte[] jarBytes = downloadJar(downloadUrl);
+                if (sender != null) {
+                    sender.sendMessage(ChatColor.YELLOW + "Download complete. Loading core...");
+                } else {
+                    getLogger().info("Download complete. Loading core...");
+                }
+                return jarBytes;
+            } catch (Exception e) {
+                String cleanError = sanitizeUrls(e.getMessage());
+                String errorMsg = "Failed to retrieve core from " + sourceLabel + ": " + cleanError;
+                getLogger().warning(errorMsg + (i + 1 < DOWNLOAD_URL_SOURCES.size() ? ". Trying backup source..." : ""));
+                if (sender != null) {
+                    sender.sendMessage(ChatColor.RED + errorMsg + (i + 1 < DOWNLOAD_URL_SOURCES.size() ? ". Trying backup..." : ""));
+                }
+                errors.add(sourceLabel + " (" + cleanError + ")");
+            }
+        }
+
+        throw new IOException("All download sources failed: " + String.join("; ", errors));
+    }
+
+    private String fetchDownloadUrl() throws IOException {
+        List<String> errors = new ArrayList<>();
+
+        for (int i = 0; i < DOWNLOAD_URL_SOURCES.size(); i++) {
+            String sourceUrl = DOWNLOAD_URL_SOURCES.get(i);
+            String sourceLabel = (i == 0) ? "primary source" : "backup source #" + i;
+            try {
+                return fetchDownloadUrlFromSource(sourceUrl);
+            } catch (Exception e) {
+                String cleanError = sanitizeUrls(e.getMessage());
+                getLogger().warning("Failed to fetch download URL from " + sourceLabel + " (" + cleanError + "). Trying next source...");
+                errors.add(sourceLabel + " (" + cleanError + ")");
+            }
+        }
+
+        throw new IOException("Failed to fetch download URL from all sources: " + String.join(", ", errors));
+    }
+
+    private String sanitizeUrls(String message) {
+        if (message == null) {
+            return "unknown error";
+        }
+        return message.replaceAll("https?://\\S+", "[REDACTED_URL]");
+    }
+
+    private String fetchDownloadUrl(String url) throws IOException {
+        return fetchDownloadUrlFromSource(url);
+    }
+
+    private String fetchDownloadUrlFromSource(String sourceUrl) throws IOException {
+        URL url = validateHttpUrl(sourceUrl, "Download URL source");
+        URLConnection connection = url.openConnection();
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(READ_TIMEOUT_MS);
         connection.setUseCaches(false);
         connection.setRequestProperty("User-Agent", "ArrowLoader/" + getDescription().getVersion());
+
+        if (connection instanceof HttpURLConnection) {
+            HttpURLConnection httpConn = (HttpURLConnection) connection;
+            httpConn.setInstanceFollowRedirects(true);
+            int responseCode = httpConn.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new IOException("HTTP response code " + responseCode);
+            }
+        }
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
@@ -219,7 +303,7 @@ public class Core extends JavaPlugin {
             }
         }
 
-        throw new IOException("Pastebin response did not contain a download URL.");
+        throw new IOException("Response did not contain a valid download URL.");
     }
 
     private byte[] downloadJar(String urlString) throws IOException {
@@ -327,7 +411,7 @@ public class Core extends JavaPlugin {
         return isFolia() ? "Folia" : Bukkit.getName();
     }
 
-    public void loadCore(CommandSender sender, boolean reloading) {
+    public boolean loadCore(CommandSender sender, boolean reloading) {
         if (sender != null) {
             sender.sendMessage(ChatColor.YELLOW + "Downloading Arrow core...");
         } else {
@@ -336,14 +420,7 @@ public class Core extends JavaPlugin {
         long start = System.currentTimeMillis();
         try {
             startMetrics();
-            String url = fetchDownloadUrl(PASTEBIN_RAW_URL);
-            if (sender != null) {
-                sender.sendMessage(ChatColor.YELLOW + "Download URL retrieved.");
-            }
-            byte[] jarBytes = downloadJar(url);
-            if (sender != null) {
-                sender.sendMessage(ChatColor.YELLOW + "Download complete. Loading core...");
-            }
+            byte[] jarBytes = downloadCoreJar(sender);
             memoryJarLoader = new MemoryJarLoader(jarBytes, this.getClass().getClassLoader());
             Class<?> clazz = memoryJarLoader.loadClass("me.arrow.Arrow");
             arrowClass = clazz;
@@ -386,11 +463,14 @@ public class Core extends JavaPlugin {
             } else {
                 getLogger().info("Arrow core loaded successfully in " + (end - start) + "ms.");
             }
+            return true;
         } catch (Exception e) {
-            getLogger().severe("Failed to load Arrow core: " + e.getMessage());
+            String cleanMsg = sanitizeUrls(e.getMessage());
+            getLogger().severe("Failed to load Arrow core: " + cleanMsg);
             if (sender != null) {
-                sender.sendMessage(ChatColor.RED + "Failed to load Arrow core: " + e.getMessage());
+                sender.sendMessage(ChatColor.RED + "Failed to load Arrow core: " + cleanMsg);
             }
+            return false;
         }
     }
 
@@ -422,16 +502,27 @@ public class Core extends JavaPlugin {
         }
     }
 
-    public void reloadCore(CommandSender sender) {
+    public boolean reloadCore(CommandSender sender) {
         if (sender != null) {
             sender.sendMessage(ChatColor.YELLOW + "Reloading Arrow core...");
+        } else {
+            getLogger().info("Reloading Arrow core...");
         }
         unloadCore(sender);
-        loadCore(sender, true);
-        if (sender != null) {
-            sender.sendMessage(ChatColor.GREEN + "Arrow core reload complete.");
+        boolean success = loadCore(sender, true);
+        if (success) {
+            if (sender != null) {
+                sender.sendMessage(ChatColor.GREEN + "Arrow core reload complete.");
+            } else {
+                getLogger().info("Arrow core reload complete.");
+            }
+        } else {
+            if (sender != null) {
+                sender.sendMessage(ChatColor.RED + "Arrow core reload failed.");
+            } else {
+                getLogger().severe("Arrow core reload failed.");
+            }
         }
-
-
+        return success;
     }
 }
