@@ -86,9 +86,18 @@ public final class MemoryJarLoader extends ClassLoader implements AutoCloseable 
         return super.getResourceAsStream(name);
     }
 
+    public boolean hasClass(String name) {
+        return classes.containsKey(name);
+    }
+
+    public boolean hasResource(String name) {
+        return resources.containsKey(name);
+    }
+
     @Override
     public void close() {
         classes.clear();
         resources.clear();
+        loadedClasses.clear();
     }
 }

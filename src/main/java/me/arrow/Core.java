@@ -1,7 +1,5 @@
 package me.arrow;
 
-import lombok.Getter;
-import lombok.Setter;
 import me.arrow.utility.MemoryJarLoader;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.Bukkit;
@@ -51,14 +49,28 @@ public class Core extends JavaPlugin {
     private static final int READ_TIMEOUT_MS = 15000;
     private static final int BUFFER_SIZE = 8192;
     private static final int MAX_JAR_BYTES = 64 * 1024 * 1024;
+    private static final String BUKKIT_ENTRYPOINT_CLASS = "me.arrow.backend.bukkit.ArrowBukkitPlugin";
+    private static final String BUKKIT_CORE_CLASS = "me.arrow.Arrow";
 
-    @Getter
-    @Setter
     private Object arrowInstance;
 
-    @Getter
-    @Setter
     private Class<?> arrowClass;
+
+    public Object getArrowInstance() {
+        return arrowInstance;
+    }
+
+    public void setArrowInstance(Object arrowInstance) {
+        this.arrowInstance = arrowInstance;
+    }
+
+    public Class<?> getArrowClass() {
+        return arrowClass;
+    }
+
+    public void setArrowClass(Class<?> arrowClass) {
+        this.arrowClass = arrowClass;
+    }
 
     /**
      * Returns the Arrow core class, loading it if necessary.
@@ -126,7 +138,20 @@ public class Core extends JavaPlugin {
         }
     }
 
-    private Object constructArrow(Class<?> clazz, File folder) throws Exception {
+    private Object constructArrow(Class<?> bukkitEntrypoint, Class<?> clazz, File folder) throws Exception {
+        try {
+            Method factory = bukkitEntrypoint.getMethod("createForLoader", JavaPlugin.class, File.class);
+            factory.setAccessible(true);
+            Object arrow = factory.invoke(null, instance, folder);
+            if (!clazz.isInstance(arrow)) {
+                throw new IllegalStateException("Bukkit loader bridge returned "
+                        + (arrow == null ? "null" : arrow.getClass().getName()) + " instead of " + clazz.getName());
+            }
+            return arrow;
+        } catch (NoSuchMethodException ignored) {
+            // Fall through only for an older Bukkit Arrow JAR; Fabric JARs are rejected before this point.
+        }
+
         try {
             Constructor<?> constructor = clazz.getConstructor(JavaPlugin.class, File.class);
             constructor.setAccessible(true);
@@ -142,6 +167,19 @@ public class Core extends JavaPlugin {
         }
 
         throw new NoSuchMethodException("me.arrow.Arrow must have constructor (JavaPlugin, File) or (JavaPlugin, File, int).");
+    }
+
+    private void validateBukkitArtifact() throws IOException {
+        if (!memoryJarLoader.hasResource("plugin.yml")) {
+            throw new IOException("Downloaded Arrow JAR has no Bukkit plugin.yml.");
+        }
+//        if (memoryJarLoader.hasResource("fabric.mod.json")) {
+//            throw new IOException("ArrowLoader accepts Bukkit Arrow JARs only; a Fabric artifact was downloaded.");
+//        }
+
+        if (!memoryJarLoader.hasClass(BUKKIT_ENTRYPOINT_CLASS)) {
+            throw new IOException("Downloaded Bukkit Arrow JAR has no " + BUKKIT_ENTRYPOINT_CLASS + " entrypoint.");
+        }
     }
 
     private void invokeArrowEnable(Class<?> clazz, Object instance) throws Exception {
@@ -422,9 +460,11 @@ public class Core extends JavaPlugin {
             startMetrics();
             byte[] jarBytes = downloadCoreJar(sender);
             memoryJarLoader = new MemoryJarLoader(jarBytes, this.getClass().getClassLoader());
-            Class<?> clazz = memoryJarLoader.loadClass("me.arrow.Arrow");
+            validateBukkitArtifact();
+            Class<?> bukkitEntrypoint = memoryJarLoader.loadClass(BUKKIT_ENTRYPOINT_CLASS);
+            Class<?> clazz = memoryJarLoader.loadClass(BUKKIT_CORE_CLASS);
             arrowClass = clazz;
-            arrowInstance = constructArrow(clazz, getDataFolder());
+            arrowInstance = constructArrow(bukkitEntrypoint, clazz, getDataFolder());
             if (sender != null) {
                 sender.sendMessage(ChatColor.YELLOW + "Invoking Arrow onEnable...");
             }
@@ -465,6 +505,10 @@ public class Core extends JavaPlugin {
             }
             return true;
         } catch (Exception e) {
+            shutdownMetrics();
+            closeMemoryLoader();
+            arrowInstance = null;
+            arrowClass = null;
             String cleanMsg = sanitizeUrls(e.getMessage());
             getLogger().severe("Failed to load Arrow core: " + cleanMsg);
             if (sender != null) {

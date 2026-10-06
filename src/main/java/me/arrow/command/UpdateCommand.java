@@ -1,7 +1,5 @@
 package me.arrow.command;
 
-import lombok.NonNull;
-
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -17,7 +15,7 @@ public class UpdateCommand implements CommandExecutor {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, @NonNull Command command, @NonNull String label, String @NonNull [] args) {
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!sender.hasPermission("arrow.admin")) {
             sender.sendMessage(ChatColor.RED + "You lack permission to use this command.");
             return true;
@@ -29,6 +27,5 @@ public class UpdateCommand implements CommandExecutor {
         return true;
     }
 }
-
 
 
